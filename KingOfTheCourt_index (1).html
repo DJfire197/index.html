@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>King of the Court — Browser Prototype</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html,body{height:100%; margin:0; background:#000; color:#fff; font-family:Inter,Arial,Helvetica,sans-serif;}
+    #overlay, #menu, #rankMenu, #skinsMenu, #villageMenu { position: absolute; z-index: 10; left: 20px; top: 20px; }
+    #menu, #rankMenu, #skinsMenu, #villageMenu {
+      background: rgba(0,0,0,0.6); padding: 12px; border-radius: 8px; border: 2px solid rgba(255,215,0,0.9);
+      display: none; min-width:220px;
+    }
+    #title { font-size: 20px; margin-bottom:8px; text-align:center; color: gold; }
+    button { background: gold; color:#000; border:none; padding:8px 10px; margin:6px 4px; border-radius:6px; cursor:pointer; font-weight:600; }
+    .small { padding:6px 8px; font-size:14px; }
+    #hud { position: absolute; z-index: 10; right: 20px; top: 20px; background: rgba(0,0,0,0.4); padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); }
+    #hud p { margin:4px 0; }
+    #gameCanvas { display:block; width:100vw; height:100vh; }
+    #centerNotice { position: absolute; left:50%; top:10%; transform: translateX(-50%); z-index: 11; background: rgba(0,0,0,0.6); padding:8px 12px; border-radius:8px; border:1px solid gold; display:none; }
+    #godUI { position:absolute; left:50%; bottom:20px; transform:translateX(-50%); z-index:12; display:none; background:rgba(0,0,0,0.6); padding:8px;border-radius:8px;}
+    #miniMap { position: absolute; left:20px; bottom:20px; z-index:10; width:150px; height:150px; background: rgba(255,255,255,0.03); border-radius:8px; border:1px solid rgba(255,255,255,0.06); }
+    .skinBtn { display:inline-block; margin:4px; padding:6px; border-radius:6px; background:#222; color:#fff; cursor:pointer; border:1px solid rgba(255,255,255,0.06); }
+    .stat { font-size:13px; color:#ddd; }
+  </style>
+</head>
+<body>
+  <div id="menu">
+    <div id="title">👑 King of the Court</div>
+    <div style="text-align:center;">
+      <button id="btnPlay">Play</button><br/>
+      <button id="btnRank">Rank</button>
+      <button id="btnSkins">Skins</button>
+      <button id="btnVillage">Edit Village</button><br/>
+      <small style="color:#ddd">Prototype — single-player browser build</small>
+    </div>
+  </div>
+
+  <div id="rankMenu">
+    <div id="title">Your Rank</div>
+    <p id="rankText" class="stat"></p>
+    <p class="stat">XP: <span id="xpText"></span> • Coins: <span id="coinText"></span></p>
+    <button id="btnRankBack" class="small">Back</button>
+  </div>
+
+  <div id="skinsMenu">
+    <div id="title">Skins</div>
+    <div id="skinOptions"></div>
+    <button id="btnSkinsBack" class="small">Back</button>
+  </div>
+
+  <div id="villageMenu">
+    <div id="title">Edit Village</div>
+    <p class="stat">Village Tier changes visually with rank.</p>
+    <button id="btnVillageBack" class="small">Back</button>
+  </div>
+
+  <div id="hud">
+    <p><strong id="hudRank">Rank:</strong></p>
+    <p class="stat">Coins: <span id="hudCoins">0</span> • XP: <span id="hudXP">0</span></p>
+    <p class="stat">Weapon: <span id="hudWeapon">Fists</span> • HP: <span id="hudHP">100</span></p>
+    <button id="btnEndRound" class="small">End Round (simulate final)</button>
+  </div>
+
+  <div id="centerNotice"></div>
+  <div id="godUI">
+    <div style="text-align:center;color:gold;font-weight:bold;">You are the God</div>
+    <div style="margin-top:6px;">
+      <button id="godTornado" class="small">Tornado</button>
+      <button id="godVolcano" class="small">Volcano</button>
+      <button id="godEarthquake" class="small">Earthquake</button>
+    </div>
+  </div>
+
+  <div id="miniMap"></div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/controls/PointerLockControls.js"></script>
+
+  <script>
+  // ========== GAME STATE & PROGRESSION =========
+  let coins = 0, xp = 0, rank = 0; // 0=Poor,1=Regular,2=Silver,3=Gold
+  const rankNames = ["Poor Village","Regular Village","Silver Village","Gold Village"];
+  const rankThresholds = [0, 100, 300, 700];
+  let weaponLevel = 0; // 0 fists, 1 sword, 2 better sword...
+  let hp = 100, maxHP = 100;
+  let isGod = false;
+  let godUsed = false;
+
+  const skinsByRank = {
+    0: ["Poor Boy","Poor Girl"],
+    1: ["Regular Boy","Regular Girl","Knight"],
+    2: ["Silver Boy","Silver Girl","Made of Silver","Silver-Gold"],
+    3: ["Gold Boy","Gold Girl","Coins Floating","Gold Armor"]
+  };
+  let selectedSkin = "Poor Boy";
+
+  // UI refs
+  const menu = document.getElementById('menu');
+  const rankMenu = document.getElementById('rankMenu');
+  const skinsMenu = document.getElementById('skinsMenu');
+  const villageMenu = document.getElementById('villageMenu');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnRank = document.getElementById('btnRank');
+  const btnSkins = document.getElementById('btnSkins');
+  const btnVillage = document.getElementById('btnVillage');
+  const btnRankBack = document.getElementById('btnRankBack');
+  const btnSkinsBack = document.getElementById('btnSkinsBack');
+  const btnVillageBack = document.getElementById('btnVillageBack');
+  const rankText = document.getElementById('rankText');
+  const xpText = document.getElementById('xpText');
+  const coinText = document.getElementById('coinText');
+  const hudCoins = document.getElementById('hudCoins');
+  const hudXP = document.getElementById('hudXP');
+  const hudRank = document.getElementById('hudRank');
+  const hudHP = document.getElementById('hudHP');
+  const hudWeapon = document.getElementById('hudWeapon');
+  const skinOptions = document.getElementById('skinOptions');
+  const btnEndRound = document.getElementById('btnEndRound');
+  const centerNotice = document.getElementById('centerNotice');
+  const godUI = document.getElementById('godUI');
+  const godTornado = document.getElementById('godTornado');
+  const godVolcano = document.getElementById('godVolcano');
+  const godEarthquake = document.getElementById('godEarthquake');
+  const miniMap = document.getElementById('miniMap');
+
+  menu.style.display = 'block';
+
+  btnPlay.onclick = () => { menu.style.display = 'none'; startGame(); };
+  btnRank.onclick = () => { openRankMenu(); };
+  btnSkins.onclick = () => { openSkinsMenu(); };
+  btnVillage.onclick = () => { openVillageMenu(); };
+  btnRankBack.onclick = () => { rankMenu.style.display='none'; menu.style.display='block'; };
+  btnSkinsBack.onclick = () => { skinsMenu.style.display='none'; menu.style.display='block'; };
+  btnVillageBack.onclick = () => { villageMenu.style.display='none'; menu.style.display='block'; };
+
+  function openRankMenu(){
+    menu.style.display='none'; rankMenu.style.display='block';
+    rankText.innerText = rankNames[rank];
+    xpText.innerText = xp; coinText.innerText = coins;
+  }
+
+  function openSkinsMenu(){
+    menu.style.display='none'; skinsMenu.style.display='block';
+  }
+
+  function openVillageMenu(){
+    menu.style.display='none'; villageMenu.style.display='block';
+  }
+  function renderSkinOptions(){
+    skinOptions.innerHTML = '';
+    skinsByRank[rank].forEach(s => {
+      const btn = document.createElement('div');
+      btn.className = 'skinBtn';
+      btn.innerText = s;
+      btn.onclick = () => { selectedSkin = s; alert('Selected skin: '+s); applySkinToPlayer(); };
+      skinOptions.appendChild(btn);
+    });
+  }
+
+  function updateRankProgress(){
+    // rank up if xp >= threshold
+    for(let r=3;r>rank;r--){
+      if(xp >= rankThresholds[r]) { rank = r; }
+    }
+    hudCoins.innerText = coins;
+    hudXP.innerText = xp;
+    hudRank.innerText = 'Rank: ' + rankNames[rank];
+    hudHP.innerText = hp + '/' + maxHP;
+    hudWeapon.innerText = weaponLevel===0 ? 'Fists' : 'Sword Lv.'+weaponLevel;
+  }
+
+  // ========== THREE.JS WORLD =========
+  let scene, camera, renderer, controls;
+  let player, playerCollider;
+  let moveState = { forward:false,back:false,left:false,right:false };
+  let velocity = new THREE.Vector3();
+  let clock = new THREE.Clock();
+  let chests = [];
+  let pickups = [];
+  let boss = null;
+  let lavaActive = false;
+  let finalCenter = new THREE.Vector3(0,0,0);
+
+  function startGame(){
+    initThree();
+    spawnWorld();
+    spawnChestsInitial();
+    animate();
+  }
+
+  function initThree(){
+    const canvas = document.getElementById('gameCanvas');
+    renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x87ceeb, 0.0015);
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+
+    // player root
+    player = new THREE.Object3D();
+    player.position.set(0,1.2,10);
+    scene.add(player);
+
+    // visible player model (cube)
+    const geom = new THREE.BoxGeometry(1,1.8,1);
+    const mat = new THREE.MeshStandardMaterial({color:0xffd700});
+    const model = new THREE.Mesh(geom, mat);
+    model.position.y = 0.9;
+    player.add(model);
+
+    player.userData.model = model;
+
+    // lights
+    const hemi = new THREE.HemisphereLight(0xffffee, 0x444455, 0.9);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(50,100,50);
+    scene.add(dir);
+
+    // pointer lock controls
+    controls = new THREE.PointerLockControls(camera, document.body);
+    document.body.addEventListener('click', ()=> {
+      if(!controls.isLocked) controls.lock();
+    });
+
+    controls.addEventListener('lock', ()=> {
+      // hide menus when locked
+    });
+
+    // camera initial offset behind player
+    camera.position.set(0, 2.2, 4);
+
+    window.addEventListener('resize', onResize);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    document.addEventListener('mousedown', onMouseDown);
+    updateRankProgress();
+  }
+
+  function onResize(){ renderer.setSize(window.innerWidth, window.innerHeight); camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); }
+
+  function onKeyDown(e){
+    if(['w','W'].includes(e.key)) moveState.forward = true;
+    if(['s','S'].includes(e.key)) moveState.backward = true;
+    if(['a','A'].includes(e.key)) moveState.left = true;
+    if(['d','D'].includes(e.key)) moveState.right = true;
+    if(e.key === 'Tab'){ e.preventDefault(); menu.style.display = menu.style.display==='block' ? 'none' : 'block'; }
+  }
+  function onKeyUp(e){
+    if(['w','W'].includes(e.key)) moveState.forward = false;
+    if(['s','S'].includes(e.key)) moveState.backward = false;
+    if(['a','A'].includes(e.key)) moveState.left = false;
+    if(['d','D'].includes(e.key)) moveState.right = false;
+  }
+
+  function onMouseDown(e){
+    if(controls.isLocked){
+      // attack
+      performAttack();
+    }
+  }
+
+  // World creation: island with areas
+  function spawnWorld(){
+    // island ground (slightly raised disc)
+    const islandGeo = new THREE.CylinderGeometry(30, 40, 4, 48);
+    const islandMat = new THREE.MeshStandardMaterial({color:0x2b8a3e});
+    const island = new THREE.Mesh(islandGeo, islandMat);
+    island.position.y = -2;
+    scene.add(island);
+
+    // mountains (cone shapes)
+    function createMountain(x,z,scale,color=0x775533){
+      const g = new THREE.ConeGeometry(6*scale, 16*scale, 16);
+      const m = new THREE.MeshStandardMaterial({color});
+      const c = new THREE.Mesh(g,m);
+      c.position.set(x, 6*scale, z);
+      scene.add(c);
+      return c;
+    }
+    createMountain(-18, -5, 1.2);
+    createMountain(14, -12, 1.1);
+    const caveMount = createMountain(10, 18, 1.3, 0x5b3a24);
+
+    // cave opening near that mountain (a darker box)
+    const caveBox = new THREE.Mesh(new THREE.BoxGeometry(6,4,4), new THREE.MeshStandardMaterial({color:0x111111}));
+    caveBox.position.set(10, -0.5, 18-2);
+    scene.add(caveBox);
+
+    // lake in center-left
+    const lakeGeo = new THREE.CylinderGeometry(10,10,0.1,32);
+    const lakeMat = new THREE.MeshStandardMaterial({color:0x1e90ff, transparent:true, opacity:0.8});
+    const lake = new THREE.Mesh(lakeGeo,lakeMat);
+    lake.rotation.x = -Math.PI/2;
+    lake.position.set(-8, -1.6, 6);
+    scene.add(lake);
+    // small island in lake
+    const lakeIsl = new THREE.Mesh(new THREE.CylinderGeometry(2,3,1,12), new THREE.MeshStandardMaterial({color:0x2b8a3e}));
+    lakeIsl.position.set(-8, -0.9, 6);
+    scene.add(lakeIsl);
+
+    // jungle area: a group of trees
+    function makeTree(x,z){
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,2,8), new THREE.MeshStandardMaterial({color:0x7b4f2b}));
+      trunk.position.set(x,0.5,z);
+      const leaves = new THREE.Mesh(new THREE.ConeGeometry(1.2,2,8), new THREE.MeshStandardMaterial({color:0x116611}));
+      leaves.position.set(x,1.6,z);
+      scene.add(trunk); scene.add(leaves);
+    }
+    for(let i=0;i<15;i++){
+      let x = -18 + Math.random()*10;
+      let z = -6 + Math.random()*12;
+      makeTree(x,z);
+    }
+
+    // forest scatter
+    for(let i=0;i<10;i++){
+      let x = 2 + Math.random()*10;
+      let z = -4 + Math.random()*10;
+      makeTree(x,z);
+    }
+
+    // plains village (some cubes)
+    for(let i=0;i<5;i++){
+      const house = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshStandardMaterial({color:0xa65a2a}));
+      house.position.set(8 + i*2.5, 0, -10 + (i%2)*2);
+      scene.add(house);
+    }
+
+    // small center platform for final duel
+    const centerPlatform = new THREE.Mesh(new THREE.CylinderGeometry(4,4,0.5,24), new THREE.MeshStandardMaterial({color:0x333333}));
+    centerPlatform.position.set(0,0,-2);
+    centerPlatform.name = 'centerPlatform';
+    scene.add(centerPlatform);
+
+    finalCenter.copy(centerPlatform.position);
+
+    // mini props: rocks
+    for(let i=0;i<20;i++){
+      const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.4), new THREE.MeshStandardMaterial({color:0x555555}));
+      r.position.set((Math.random()-0.5)*30, -1.5 + Math.random()*2, (Math.random()-0.5)*30);
+      r.scale.setScalar(0.6+Math.random());
+      scene.add(r);
+    }
+  }
+
+  // spawn chests at fixed positions
+  function spawnChestsInitial(){
+    const positions = [
+      {x:-6,z:8},{x:12,z:-8},{x:-16,z:-2},{x:6,z:12},{x:0,z:-8}
+    ];
+    positions.forEach(p => spawnChest(new THREE.Vector3(p.x,0.6,p.z)));
+  }
+
+  function spawnChest(pos){
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.8,0.8), new THREE.MeshStandardMaterial({color:0x8b4513}));
+    chest.position.copy(pos);
+    chest.userData.isChest = true;
+    chest.userData.opened = false;
+    scene.add(chest);
+    chests.push(chest);
+  }
+
+  // pickups: coins, potions, swords (as small spheres)
+  function spawnPickup(type, pos){
+    let color = type==='coin' ? 0xffd700 : type==='potion' ? 0x00ffcc : 0x8888ff;
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.25,10,10), new THREE.MeshStandardMaterial({color}));
+    mesh.position.copy(pos);
+    mesh.userData.type = type;
+    mesh.userData.lifetime = 60; // seconds
+    scene.add(mesh);
+    pickups.push(mesh);
+  }
+
+  // simple attack
+  function performAttack(){
+    // create a short-range sphere in front of player
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    const attackPoint = player.position.clone().add(forward.multiplyScalar(1.5));
+    // check boss
+    if(boss){
+      const d = boss.position.distanceTo(player.position);
+      const dmg = 20 + weaponLevel*15;
+      if(d < 2.5){
+        boss.userData.hp -= dmg;
+        showCenter('Hit boss -'+dmg);
+        if(boss.userData.hp <= 0) { onBossDefeated(); }
+      }
+    }
+    // simple chest interaction: open nearby chests
+    chests.forEach(c=>{
+      if(!c.userData.opened && c.position.distanceTo(player.position) < 2){
+        c.userData.opened = true;
+        // spawn random pickup(s)
+        const r = Math.random();
+        if(r < 0.6) spawnPickup('coin', c.position.clone().add(new THREE.Vector3(0,0.8,0)));
+        else if(r < 0.85) spawnPickup('potion', c.position.clone().add(new THREE.Vector3(0,0.8,0)));
+        else { spawnPickup('sword', c.position.clone().add(new THREE.Vector3(0,0.8,0))); }
+        // visual: change chest color
+        c.material.color.set(0x444444);
+      }
+    });
+  }
+
+  // basic pickup collection
+  function checkPickups(delta){
+    for(let i=pickups.length-1;i>=0;i--){
+      const p = pickups[i];
+      // float up/down
+      p.position.y += Math.sin(Date.now()/200 + i)/200;
+      // lifetime
+      p.userData.lifetime -= delta;
+      if(p.userData.lifetime <= 0){ scene.remove(p); pickups.splice(i,1); continue; }
+      if(p.position.distanceTo(player.position) < 1.3){
+        // collect
+        if(p.userData.type === 'coin'){ coins += 5; xp += 5; showCenter('+5 coins'); }
+        if(p.userData.type === 'potion'){ hp = Math.min(maxHP, hp + 30); showCenter('Healed +30'); }
+        if(p.userData.type === 'sword'){ weaponLevel = Math.min(3, weaponLevel + 1); xp += 20; showCenter('Got sword'); }
+        scene.remove(p); pickups.splice(i,1);
+        updateRankProgress();
+      }
+    }
+  }
+
+  // End round: teleport player to center and activate lava
+  btnEndRound.onclick = () => {
+    goToFinalDuel();
+  };
+
+  function goToFinalDuel(){
+    // teleport
+    player.position.copy(finalCenter.clone().add(new THREE.Vector3(1.2,0,0)));
+    // activate lava ring that damages outside 6 unit radius
+    lavaActive = true; showCenter('Final duel started! Stay on platform');
+    // spawn boss after short delay
+    setTimeout(()=> spawnBoss(), 1200);
+    // after 60s end lava
+    setTimeout(()=> { lavaActive=false; showCenter('Lava receded'); }, 60000);
+  }
+
+  function spawnBoss(){
+    if(boss) { scene.remove(boss); boss = null; }
+    boss = new THREE.Mesh(new THREE.SphereGeometry(1.6,16,16), new THREE.MeshStandardMaterial({color:0x882222}));
+    boss.position.copy(finalCenter.clone().add(new THREE.Vector3(0,1,0)));
+    boss.userData.hp = 300 + rank*50;
+    scene.add(boss);
+    showCenter('A god descends!');
+  }
+
+  function onBossDefeated(){
+    showCenter('Boss defeated! You are the God!');
+    isGod = true; godUsed = false;
+    godUI.style.display = 'block';
+    // reward XP/coins
+    coins += 200; xp += 200;
+    updateRankProgress();
+    // remove boss
+    if(boss){ scene.remove(boss); boss=null; }
+  }
+
+  // God abilities — each usable once
+  godTornado.onclick = () => { if(isGod && !godUsed) { unleashTornado(); godUsed=true; } };
+  godVolcano.onclick = () => { if(isGod && !godUsed) { unleashVolcano(); godUsed=true; } };
+  godEarthquake.onclick = () => { if(isGod && !godUsed) { unleashEarthquake(); godUsed=true; } };
+
+  function unleashTornado(){
+    showCenter('Tornado unleashed!');
+    // push all pickups away (visual)
+    pickups.forEach(p => p.position.add(new THREE.Vector3((Math.random()-0.5)*6,2,(Math.random()-0.5)*6)));
+    setTimeout(()=> showCenter('Tornado ended'),5000);
+  }
+  function unleashVolcano(){
+    showCenter('Volcano eruption!');
+    // spawn several damaging projectiles near random positions
+    for(let i=0;i<6;i++){
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.6), new THREE.MeshStandardMaterial({color:0x663300}));
+      rock.position.copy(player.position.clone().add(new THREE.Vector3((Math.random()-0.5)*12,6,(Math.random()-0.5)*12)));
+      scene.add(rock);
+      // fall down and remove
+      setTimeout(()=> scene.remove(rock), 1200 + Math.random()*800);
+    }
+  }
+  function unleashEarthquake(){
+    showCenter('Earthquake!');
+    // screen shake effect (camera jitter)
+    const orig = camera.position.clone();
+    let t=0;
+    const id = setInterval(()=> {
+      t++;
+      camera.position.x = orig.x + (Math.random()-0.5)*0.4;
+      camera.position.y = orig.y + (Math.random()-0.5)*0.2;
+      if(t>40){ clearInterval(id); camera.position.copy(orig); showCenter('Earthquake ended'); }
+    },30);
+  }
+
+  // small helper for center notice
+  let centerTimeout = null;
+  function showCenter(text, duration=2000){
+    centerNotice.style.display='block'; centerNotice.innerText = text;
+    if(centerTimeout) clearTimeout(centerTimeout);
+    centerTimeout = setTimeout(()=> centerNotice.style.display='none', duration);
+  }
+
+  // basic physics/movement & render
+  function animate(){
+    requestAnimationFrame(animate);
+    const dt = Math.min(0.05, clock.getDelta());
+    // movement inputs: translate player
+    const speed = 6;
+    const forward = new THREE.Vector3();
+    controls.getDirection(forward); // using pointer lock controls internal dir
+    // compute move vector based on camera orientation
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), camDir).normalize();
+
+    let moveVec = new THREE.Vector3();
+    if(moveState.forward) moveVec.add(camDir);
+    if(moveState.backward) moveVec.sub(camDir);
+    if(moveState.left) moveVec.sub(right);
+    if(moveState.right) moveVec.add(right);
+    moveVec.y = 0;
+    if(moveVec.lengthSq()>0) { moveVec.normalize(); player.position.add(moveVec.multiplyScalar(speed*dt)); }
+
+    // ensure player stays above terrain (simple)
+    player.position.y = Math.max(-1.2, player.position.y);
+
+    // camera follows behind player
+    const camOffset = new THREE.Vector3(0,2.2,4);
+    const camPos = player.position.clone().add(camOffset.applyQuaternion(player.quaternion));
+    camera.position.lerp(camPos, 0.25);
+    camera.lookAt(player.position.clone().add(new THREE.Vector3(0,1.2,0)));
+
+    // pickups
+    checkPickups(dt);
+
+    // lava damage if active: players outside 4 radius take damage over time
+    if(lavaActive){
+      const dist = player.position.distanceTo(finalCenter);
+      if(dist > 4.2){
+        hp -= 30*dt;
+        hudHP.innerText = Math.max(0,Math.floor(hp)) + '/' + maxHP;
+        if(hp <= 0){
+          hp = maxHP; // respawn simple
+          player.position.set(0,1.2,10);
+          showCenter('You died — respawned');
+        }
+      }
+    }
+
+    // update HUD and UI
+    updateRankProgress();
+
+    renderer.render(scene, camera);
+  }
+
+  // very small helpers for applying skins (we simply change color/model)
+  function applySkinToPlayer(){
+    if(!player) return;
+    const model = player.userData.model;
+    if(!model) return;
+    // map skin names to simple visual changes
+    const s = selectedSkin.toLowerCase();
+    if(s.includes('poor')) model.material.color.set(0x666666);
+    else if(s.includes('regular')) model.material.color.set(0x4682b4);
+    else if(s.includes('knight') || s.includes('armor')) model.material.color.set(0x888888);
+    else if(s.includes('silver')) model.material.color.set(0xc0c0c0);
+    else if(s.includes('gold')) model.material.color.set(0xffd700);
+    else model.material.color.set(0xffd700);
+  }
+
+  // initial apply
+  applySkinToPlayer();
+
+  // helpful save/load (uses localStorage)
+  function saveProfile(){
+    const p = {coins,xp,rank,weaponLevel,selectedSkin};
+    try{ localStorage.setItem('KotC_profile', JSON.stringify(p)); } catch(e){}
+  }
+  function loadProfile(){
+    try{
+      const raw = localStorage.getItem('KotC_profile');
+      if(raw){ const p = JSON.parse(raw); coins = p.coins||0; xp=p.xp||0; rank=p.rank||0; weaponLevel=p.weaponLevel||0; selectedSkin=p.selectedSkin||selectedSkin; updateRankProgress(); }
+    }catch(e){}
+  }
+  loadProfile();
+
+  // autosave every 5s
+  setInterval(()=> saveProfile(),5000);
+
+  // simple instructions to user if they see nothing
+  setTimeout(()=> {
+    if(menu.style.display==='none' && !renderer) { menu.style.display='block'; showCenter('Click Play to start'); }
+  }, 800);
+
+  </script>
+</body>
+</html>
